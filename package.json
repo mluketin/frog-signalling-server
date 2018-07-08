@@ -1,0 +1,19 @@
+{
+  "name": "frog-signalling-server",
+  "version": "1.0.0",
+  "description": "This is a signalling server created for the FROG platform's video chat activity.",
+  "main": "server.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mluketin/frog-signalling-server.git"
+  },
+  "author": "Marin Luketin",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/mluketin/frog-signalling-server/issues"
+  },
+  "homepage": "https://github.com/mluketin/frog-signalling-server#readme"
+}
