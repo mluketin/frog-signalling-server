@@ -72,12 +72,8 @@ class UserSession {
   }
 
   setUpOutgoingMedia() {
-    var self = this;
     //create WebRtcEndpoint for stream that is coming from user to KMS
-    this.pipeline.create('WebRtcEndpoint', { useEncodedMedia: false }, function(
-      error,
-      webRtcEndpoint
-    ) {
+    this.pipeline.create('WebRtcEndpoint', (error, webRtcEndpoint) => {
       if (error) {
         logger.error(
           'UserSession - <' +
@@ -89,29 +85,29 @@ class UserSession {
 
       logger.info(
         'UserSession - ' +
-          self.name +
+          this.name +
           '<' +
-          self.id +
+          this.id +
           '> created outgoing endpoint'
       );
-      self.outgoingMedia = webRtcEndpoint;
-      self.outgoingMediaCreated = true;
-      if (self.record) {
-        self.setUpRecording();
+      this.outgoingMedia = webRtcEndpoint;
+      this.outgoingMediaCreated = true;
+      if (this.record) {
+        this.setUpRecording();
       }
 
       //when KMS creates ice candidates, send them to user
-      webRtcEndpoint.on('OnIceCandidate', function(event) {
+      webRtcEndpoint.on('OnIceCandidate', event => {
         var candidate = kurento.getComplexType('IceCandidate')(event.candidate);
-        self.sendMessage({
+        this.sendMessage({
           id: 'iceCandidate',
-          name: self.name,
-          userId: self.id,
+          name: this.name,
+          userId: this.id,
           candidate: candidate
         });
         logger.trace(
           'UserSession - <' +
-            self.id +
+            this.id +
             '> sent outgoing candidate: ' +
             JSON.stringify(candidate)
         );
@@ -120,27 +116,25 @@ class UserSession {
   }
 
   setUpRecording() {
-    var self = this;
-
     this.pipeline.create(
       'RecorderEndpoint',
-      { uri: self.recordingPath },
-      function(error, recorder) {
+      { uri: this.recordingPath },
+      (error, recorder) => {
         if (error) {
           logger.error(
-            'UserSession - <' + self.id + '> setUprecording error: ' + error
+            'UserSession - <' + this.id + '> setUprecording error: ' + error
           );
         }
 
-        self.recordingEndpoint = recorder;
-        self.outgoingMedia.connect(recorder);
-        self.recordingEndpoint.record();
+        this.recordingEndpoint = recorder;
+        this.outgoingMedia.connect(recorder);
+        this.recordingEndpoint.record();
 
         logger.info(
           'UserSession - <' +
-            self.id +
+            this.id +
             '> created recording endpoint; file: ' +
-            self.recordingPath
+            this.recordingPath
         );
       }
     );
@@ -185,17 +179,16 @@ class UserSession {
         sender.id +
         '>'
     );
-    var self = this;
 
     this.getEndpointForUser(sender.id, endpoint => {
-      endpoint.processOffer(sdpOffer, function(error, sdpAnswer) {
-        self.incomingOfferProcessed[sender.id] = true;
+      endpoint.processOffer(sdpOffer, (error, sdpAnswer) => {
+        this.incomingOfferProcessed[sender.id] = true;
         if (error) {
           logger.error(
             'UserSession: ' +
-              self.name +
+              this.name +
               '<' +
-              self.id +
+              this.id +
               '> receiveVideoFrom getting endpoint: ' +
               error
           );
@@ -208,12 +201,12 @@ class UserSession {
           sdpAnswer: sdpAnswer
         };
 
-        self.sendMessage(answerMessage);
+        this.sendMessage(answerMessage);
         logger.info(
           'UserSession - ' +
-            self.name +
+            this.name +
             '<' +
-            self.id +
+            this.id +
             '> receiveVideoFrom - sdpAnswer for ' +
             sender.name +
             '<' +
@@ -223,13 +216,13 @@ class UserSession {
 
         endpoint.gatherCandidates();
 
-        if (sender.id !== self.id) {
+        if (sender.id !== this.id) {
           sender.getOutgoingWebRtcPeer().connect(endpoint);
           if (
-            self.incomingCandidates[sender.id] &&
-            self.incomingCandidates[sender.id].length > 0
+            this.incomingCandidates[sender.id] &&
+            this.incomingCandidates[sender.id].length > 0
           ) {
-            self.incomingCandidates[sender.id].forEach(candidate => {
+            this.incomingCandidates[sender.id].forEach(candidate => {
               endpoint.addIceCandidate(candidate);
             });
           }
@@ -251,10 +244,9 @@ class UserSession {
       if (this.outgoingMedia) {
         return callback(this.outgoingMedia);
       } else {
-        var self = this;
         function loop() {
-          setTimeout(function() {
-            var outMedia = self.outgoingMedia;
+          setTimeout(() => {
+            var outMedia = this.outgoingMedia;
             if (outMedia) {
               callback(outMedia);
             } else {
@@ -274,23 +266,22 @@ class UserSession {
     }
 
     //endpoint does not exist, we have to create it, creating takes time
-    var self = this;
-    this.pipeline.create('WebRtcEndpoint', function(error, webRtcEndpoint) {
+    this.pipeline.create('WebRtcEndpoint', (error, webRtcEndpoint) => {
       if (error) {
         logger.error('UserSession - pipeline create: ' + error);
       }
 
       incoming = webRtcEndpoint;
 
-      webRtcEndpoint.on('OnIceCandidate', function(event) {
+      webRtcEndpoint.on('OnIceCandidate', event => {
         var candidate = kurento.getComplexType('IceCandidate')(event.candidate);
-        self.sendMessage({
+        this.sendMessage({
           id: 'iceCandidate',
           userId: senderId,
           candidate: candidate
         });
       });
-      self.incomingMedia[senderId] = incoming;
+      this.incomingMedia[senderId] = incoming;
       return callback(incoming);
     });
   }
