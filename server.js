@@ -353,7 +353,6 @@ kurento(argv.ws_uri, (error, _kurentoClient) => {
 
   // the code below enables file download
   // app.get('/download', function(req, res) {
-  //   //var file = __dirname + '/upload-folder/dramaticpenguin.MOV';
   //   var file = 'FILE_PATH';
   //   res.download(file); // Set disposition and send it.
   // });
