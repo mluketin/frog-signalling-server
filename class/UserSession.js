@@ -1,6 +1,8 @@
 var kurento = require('kurento-client');
 var logger = require('./Logger.js');
 const Config = require('../config/config');
+const WebRtcEndpoint = require('./WebRtcEndpoint');
+const RecorderEndpoint = require('./RecorderEndpoint');
 
 /**
  * User session represents user.
@@ -8,12 +10,6 @@ const Config = require('../config/config');
  * There is ws connection linked to user.
  * User has pipeline that creates WebRtcEndpoints used for communication.
  *
- *
- * @param {string} name
- * @param {string} id
- * @param {string} roomName
- * @param {WebSocket} ws
- * @param {MediaPipeline} pipeline
  */
 class UserSession {
   constructor(options, roomName, ws, pipeline) {
@@ -26,7 +22,6 @@ class UserSession {
           ', setting id to: ' +
           this.name
       );
-      //TODO
       this.id = options.name;
     }
     this.ws = ws;
@@ -34,28 +29,12 @@ class UserSession {
     this.pipeline = pipeline;
     this.roomName = roomName;
 
-    this.outgoingMedia = null;
-    this.outgoingMediaCreated = false;
-
-    this.incomingMedia = {};
-    this.incomingCandidates = {};
-    this.incomingOfferProcessed = {};
+    this.outgoingEndpoint = null;
+    this.incomingEndpoints = {};
 
     //recording endpoint
     this.record = options.record;
     this.recordingEndpoint;
-    this.recordingPath =
-      'file:/' +
-      Config.recordingsPath +
-      '/' +
-      new Date().toISOString().substring(0, 10) +
-      '_' +
-      roomName +
-      '/' +
-      options.name +
-      '_' +
-      options.userId +
-      '.webm';
 
     if (this.role !== 'watcher') {
       this.setUpOutgoingMedia();
@@ -72,70 +51,33 @@ class UserSession {
   }
 
   setUpOutgoingMedia() {
-    //create WebRtcEndpoint for stream that is coming from user to KMS
-    this.pipeline.create('WebRtcEndpoint', (error, webRtcEndpoint) => {
-      if (error) {
-        logger.error(
-          'UserSession - <' +
+    this.outgoingEndpoint = new WebRtcEndpoint(
+      this.name,
+      this.id,
+      this.pipeline,
+      eventMsg => {
+        this.sendMessage(eventMsg);
+      },
+      () => {
+        logger.info(
+          'UserSession - ' +
+            this.name +
+            '<' +
             this.id +
-            '> error in creating outgoing endpoint: ' +
-            error
+            '> created outgoing endpoint'
         );
-      }
-
-      logger.info(
-        'UserSession - ' +
-          this.name +
-          '<' +
-          this.id +
-          '> created outgoing endpoint'
-      );
-      this.outgoingMedia = webRtcEndpoint;
-      this.outgoingMediaCreated = true;
-      if (this.record) {
-        this.setUpRecording();
-      }
-
-      //when KMS creates ice candidates, send them to user
-      webRtcEndpoint.on('OnIceCandidate', event => {
-        var candidate = kurento.getComplexType('IceCandidate')(event.candidate);
-        this.sendMessage({
-          id: 'iceCandidate',
-          name: this.name,
-          userId: this.id,
-          candidate: candidate
-        });
-        logger.trace(
-          'UserSession - <' +
-            this.id +
-            '> sent outgoing candidate: ' +
-            JSON.stringify(candidate)
-        );
-      });
-    });
-  }
-
-  setUpRecording() {
-    this.pipeline.create(
-      'RecorderEndpoint',
-      { uri: this.recordingPath },
-      (error, recorder) => {
-        if (error) {
-          logger.error(
-            'UserSession - <' + this.id + '> setUprecording error: ' + error
+        if (this.record) {
+          this.recordingEndpoint = new RecorderEndpoint(
+            this.name,
+            this.id,
+            this.roomName,
+            this.pipeline,
+            recEndpoint => {
+              this.outgoingEndpoint.connect(recEndpoint);
+              this.recordingEndpoint.record();
+            }
           );
         }
-
-        this.recordingEndpoint = recorder;
-        this.outgoingMedia.connect(recorder);
-        this.recordingEndpoint.record();
-
-        logger.info(
-          'UserSession - <' +
-            this.id +
-            '> created recording endpoint; file: ' +
-            this.recordingPath
-        );
       }
     );
   }
@@ -148,26 +90,6 @@ class UserSession {
    * @param {string} sdpOffer
    */
   receiveVideoFrom(sender, sdpOffer) {
-    if (!sender) {
-      logger.error(
-        'UserSession - ' +
-          this.name +
-          '<' +
-          this.id +
-          '> receiveVideoFrom undefined'
-      );
-      return;
-    }
-    if (!sdpOffer) {
-      logger.error(
-        'UserSession - ' +
-          this.name +
-          '<' +
-          this.id +
-          '> sdpOffer is undefined or null'
-      );
-      return;
-    }
     logger.info(
       'UserSession - ' +
         this.name +
@@ -180,28 +102,8 @@ class UserSession {
         '>'
     );
 
-    this.getEndpointForUser(sender.id, endpoint => {
-      endpoint.processOffer(sdpOffer, (error, sdpAnswer) => {
-        this.incomingOfferProcessed[sender.id] = true;
-        if (error) {
-          logger.error(
-            'UserSession: ' +
-              this.name +
-              '<' +
-              this.id +
-              '> receiveVideoFrom getting endpoint: ' +
-              error
-          );
-          return;
-        }
-
-        var answerMessage = {
-          id: 'receiveVideoAnswer',
-          userId: sender.id,
-          sdpAnswer: sdpAnswer
-        };
-
-        this.sendMessage(answerMessage);
+    if (sender.id === this.id) {
+      this.outgoingEndpoint.processOffer(sender, sdpOffer, incomingEndpoint => {
         logger.info(
           'UserSession - ' +
             this.name +
@@ -213,22 +115,40 @@ class UserSession {
             sender.id +
             '>'
         );
-
-        endpoint.gatherCandidates();
-
-        if (sender.id !== this.id) {
-          sender.getOutgoingWebRtcPeer().connect(endpoint);
-          if (
-            this.incomingCandidates[sender.id] &&
-            this.incomingCandidates[sender.id].length > 0
-          ) {
-            this.incomingCandidates[sender.id].forEach(candidate => {
-              endpoint.addIceCandidate(candidate);
-            });
+      });
+    } else {
+      if (!this.incomingEndpoints[sender.id]) {
+        // create incoming endpoint for new user
+        this.incomingEndpoints[sender.id] = new WebRtcEndpoint(
+          sender.name,
+          sender.id,
+          this.pipeline,
+          eventMsg => {
+            this.sendMessage(eventMsg);
+          }
+        );
+      }
+      this.incomingEndpoints[sender.id].processOffer(
+        sender,
+        sdpOffer,
+        incomingEndpoint => {
+          logger.info(
+            'UserSession - ' +
+              this.name +
+              '<' +
+              this.id +
+              '> receiveVideoFrom - sdpAnswer for ' +
+              sender.name +
+              '<' +
+              sender.id +
+              '>'
+          );
+          if (sender.id !== this.id) {
+            sender.outgoingEndpoint.connect(incomingEndpoint);
           }
         }
-      });
-    });
+      );
+    }
   }
 
   reloadStreamFrom(sender, sdpOffer) {
@@ -236,79 +156,25 @@ class UserSession {
     this.receiveVideoFrom(sender, sdpOffer);
   }
 
-  getEndpointForUser(senderId, callback) {
-    // if sender is same as this.id, we are requiring video from us => creating send only peer in the browser
-    // if outgoing media does not exist, wait for it to be created
-    // outgoingMedia creation is called in the UserSession constructor
-    if (senderId === this.id) {
-      if (this.outgoingMedia) {
-        return callback(this.outgoingMedia);
-      } else {
-        function loop() {
-          setTimeout(() => {
-            var outMedia = this.outgoingMedia;
-            if (outMedia) {
-              callback(outMedia);
-            } else {
-              loop();
-            }
-          }, 200);
-        }
-        return loop();
-      }
-    }
-
-    var incoming = this.incomingMedia[senderId];
-
-    if (incoming) {
-      //endpoint already exists
-      return callback(incoming);
-    }
-
-    //endpoint does not exist, we have to create it, creating takes time
-    this.pipeline.create('WebRtcEndpoint', (error, webRtcEndpoint) => {
-      if (error) {
-        logger.error('UserSession - pipeline create: ' + error);
-      }
-
-      incoming = webRtcEndpoint;
-
-      webRtcEndpoint.on('OnIceCandidate', event => {
-        var candidate = kurento.getComplexType('IceCandidate')(event.candidate);
-        this.sendMessage({
-          id: 'iceCandidate',
-          userId: senderId,
-          candidate: candidate
-        });
-      });
-      this.incomingMedia[senderId] = incoming;
-      return callback(incoming);
-    });
-  }
-
   cancelVideoFromId(id) {
-    if (this.incomingMedia[id]) {
+    if (this.incomingEndpoints[id]) {
       logger.info('PARTICIPANT ' + this.name + ': removing endpoint for ' + id);
-      this.incomingMedia[id].release();
-      delete this.incomingMedia[id];
-      delete this.incomingOfferProcessed[id];
-      delete this.incomingCandidates[id];
+
+      this.incomingEndpoints[id].release();
+      delete this.incomingEndpoints[id];
     }
   }
 
   close() {
     logger.info('UserSession - ' + this.name + '<' + this.id + '> close');
 
-    var remoteParticipants = Object.keys(this.incomingMedia);
-    for (var i = 0; i < remoteParticipants.length; i++) {
-      this.incomingMedia[remoteParticipants[i]].release();
-    }
-    this.outgoingMedia.release();
+    this.incomingEndpoints.forEach(endpoint => {
+      endpoint.release();
+    });
+    this.outgoingEndpoint.release();
   }
 
   sendMessage(message) {
-    //console.log(JSON.stringify(message));
-    //todo change 1 with OPEN constant
     if (this.ws && this.ws.readyState === 1) {
       this.ws.send(JSON.stringify(message));
     } else {
@@ -334,28 +200,11 @@ class UserSession {
         JSON.stringify(candidate)
     );
     if (this.id === id) {
-      this.getEndpointForUser(id, endpoint => {
-        endpoint.addIceCandidate(candidate);
-      });
+      this.outgoingEndpoint.addCandidate(candidate);
     } else {
-      if (this.isIncomingOfferProcessed(id)) {
-        var endpoint = this.incomingMedia[id];
-        endpoint.addIceCandidate(candidate);
-      } else {
-        this.addIncomingCandidate(candidate, id);
+      if (this.incomingEndpoints[id]) {
+        this.incomingEndpoints[id].addCandidate(candidate);
       }
-    }
-  }
-
-  isIncomingOfferProcessed(senderId) {
-    return this.incomingOfferProcessed[senderId];
-  }
-
-  addIncomingCandidate(candidate, id) {
-    if (!this.incomingCandidates[id]) {
-      this.incomingCandidates[id] = [candidate];
-    } else {
-      this.incomingCandidates[id].push(candidate);
     }
   }
 
@@ -389,14 +238,9 @@ class UserSession {
     });
   }
 
-  getOutgoingWebRtcPeer() {
-    return this.outgoingMedia;
-  }
-
   releaseOutgoingMedia() {
-    this.outgoingMedia.release();
-    this.outgoingMediaCreated = false;
-    this.outgoingMedia = undefined;
+    this.outgoingEndpoint.release();
+    this.outgoingEndpoint = undefined;
   }
 }
 
