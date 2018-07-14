@@ -168,7 +168,7 @@ class UserSession {
   close() {
     logger.info('UserSession - ' + this.name + '<' + this.id + '> close');
 
-    this.incomingEndpoints.forEach(endpoint => {
+    Object.values(this.incomingEndpoints).forEach(endpoint => {
       endpoint.release();
     });
     this.outgoingEndpoint.release();
