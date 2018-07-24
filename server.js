@@ -185,13 +185,15 @@ wss.on('connection', function(ws) {
           // idea behind data is that users send messages only with their IDs
           // there is no need for user session
           logger.info('server - data - from ' + message.fromId + _message);
-          var targetUser = users[message.userId];
-          if (targetUser) {
-            targetUser.sendMessage({
-              id: 'data',
-              fromId: message.fromId,
-              payload: message.payload
-            });
+          var targetUserWs = users[message.userId];
+          if (targetUserWs) {
+            targetUserWs.send(
+              JSON.stringify({
+                id: 'data',
+                fromId: message.fromId,
+                payload: message.payload
+              })
+            );
           }
           break;
 
